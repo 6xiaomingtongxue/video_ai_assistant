@@ -1,0 +1,13 @@
+services:
+  video-text:
+    build: .
+    ports:
+      - "127.0.0.1:8000:8000"
+    environment:
+      VIDEOLENS_WHISPER_DEVICE: cpu
+      VIDEOLENS_WHISPER_COMPUTE_TYPE: int8
+    volumes:
+      - text-data:/data
+
+volumes:
+  text-data:

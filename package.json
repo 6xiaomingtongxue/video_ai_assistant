@@ -1,0 +1,17 @@
+{
+  "name": "video-ai-assistant",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Chrome MV3 prototype for a video learning AI assistant.",
+  "scripts": {
+    "validate": "node scripts/validate-extension.mjs",
+    "test": "node scripts/test-memory.mjs && node scripts/test-account-auth.mjs && node scripts/test-account-panel.mjs && node scripts/test-speech.mjs && node scripts/test-web-search.mjs",
+    "bridge:build": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-bridge.ps1",
+    "bridge:install": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/install-bridge.ps1",
+    "bridge:uninstall": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/uninstall-bridge.ps1",
+    "speech:up": "docker compose -p videolens-speech -f speech/compose.yaml up -d --build",
+    "speech:down": "docker compose -p videolens-speech -f speech/compose.yaml down",
+    "test:speech-service": "python -m unittest discover -s speech -p test_*.py",
+    "release:windows": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/package-release.ps1"
+  }
+}

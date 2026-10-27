@@ -1,0 +1,4 @@
+faster-whisper>=1.2.0,<2
+# faster-whisper 1.2.x passes metadata_errors, removed by PyAV 19.
+av>=11,<19
+yt-dlp[default]

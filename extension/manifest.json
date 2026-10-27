@@ -1,0 +1,65 @@
+{
+  "manifest_version": 3,
+  "minimum_chrome_version": "116",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAo0sOSSflxIHwA6Kp+bodSu/I7puaL1vMJ/laOn6vhhWHaGIUb9Z+kxxlEBLMS10kO/fFC4z3h8UxiTG1xtz+wyKXdiaod65qljWAVjrs9hqAlz4w2MtHG2t3JMqDuKrXVHkiXHz40Hi6T9CGjKpCIztijh/iQZ1/evPZnHWOjjfFcCslEU1DG8MMMC9yQ6zW92vEQSLbcZTjue4CX+aTQQX42f55NCnqmXkU006ejD221T4ThPdV7sRiwAYZLYAGvaOxFd3+WWwo5gDLj8BGHYlY04uFJtheMhZk9osSZA/lld4REtwB7uOe1dZ2CotyAWDt6jUU1Wcb76VU6sqvkQIDAQAB",
+  "name": "VideoLens AI",
+  "version": "0.1.0",
+  "description": "A video learning assistant that answers questions with the current YouTube or Bilibili context, transcript, and frame.",
+  "permissions": [
+    "activeTab",
+    "nativeMessaging",
+    "sidePanel",
+    "storage",
+    "tabs"
+  ],
+  "host_permissions": [
+    "<all_urls>"
+  ],
+  "action": {
+    "default_title": "Open VideoLens AI"
+  },
+  "background": {
+    "service_worker": "src/background/service_worker.js",
+    "type": "module"
+  },
+  "side_panel": {
+    "default_path": "src/sidepanel/index.html"
+  },
+  "commands": {
+    "toggle-assistant": {
+      "suggested_key": {
+        "default": "Ctrl+Shift+Y",
+        "mac": "Command+Shift+Y"
+      },
+      "description": "Open VideoLens AI for the current video"
+    }
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "*://*.youtube.com/*",
+        "*://*.bilibili.com/*"
+      ],
+      "js": [
+        "src/content/content_script.js"
+      ],
+      "css": [
+        "src/content/content_styles.css"
+      ],
+      "run_at": "document_idle"
+    }
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": [
+        "src/sidepanel/index.html",
+        "src/sidepanel/sidepanel.css",
+        "src/sidepanel/sidepanel.js"
+      ],
+      "matches": [
+        "*://*.youtube.com/*",
+        "*://*.bilibili.com/*"
+      ]
+    }
+  ]
+}

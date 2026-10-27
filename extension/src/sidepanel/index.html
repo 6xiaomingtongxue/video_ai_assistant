@@ -1,0 +1,205 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>VideoLens AI</title>
+    <link rel="stylesheet" href="./sidepanel.css">
+  </head>
+  <body>
+    <main class="app-shell">
+      <header class="topbar">
+        <div class="brand">
+          <span class="brand-mark">AI</span>
+          <div>
+            <h1>VideoLens AI</h1>
+            <p id="connectionStatus">等待视频页面</p>
+          </div>
+        </div>
+        <button id="settingsButton" class="icon-button" type="button" title="设置" aria-label="打开设置">⚙</button>
+      </header>
+
+      <section class="video-strip" aria-live="polite">
+        <div class="video-title" id="videoTitle">未连接视频</div>
+        <div class="video-meta">
+          <button id="currentTimeButton" class="time-button" type="button">00:00</button>
+          <span id="platformBadge">YouTube</span>
+        </div>
+      </section>
+
+      <section class="quick-actions" aria-label="快捷提问">
+        <button data-template="请解释当前视频片段在讲什么。" type="button">解释片段</button>
+        <button data-template="请解释当前视频画面中的主要内容。" type="button">解释画面</button>
+        <button data-template="请结合一个简单例子解释当前内容。" type="button">举例说明</button>
+        <button data-template="请将当前片段整理成学习笔记。" type="button">生成笔记</button>
+      </section>
+
+      <div id="toast" class="toast" role="status" aria-live="polite"></div>
+
+      <div class="chat-region">
+        <section id="chatList" class="chat-list" aria-live="polite" tabindex="0"></section>
+        <button id="jumpToLatestButton" class="jump-latest" type="button" hidden>回到最新</button>
+      </div>
+
+      <section class="composer">
+        <div class="input-row">
+          <textarea id="questionInput" rows="3" aria-label="向当前视频提问" placeholder="问问当前视频这里在讲什么……"></textarea>
+          <button id="sendButton" class="send-button" type="button">发送</button>
+        </div>
+        <label class="web-search-toggle" title="需要外部资料时自动搜索，仅发送必要关键词">
+          <input id="webSearchInput" type="checkbox" checked>
+          <span>联网搜索</span>
+        </label>
+        <div id="statusLine" class="status-line"></div>
+      </section>
+
+      <footer class="tool-row">
+        <button id="exportButton" type="button">导出 Markdown</button>
+        <button id="clearButton" type="button">清空记录</button>
+      </footer>
+    </main>
+
+    <aside id="settingsPanel" class="settings-panel" role="dialog" aria-modal="true" aria-labelledby="settingsTitle" aria-hidden="true" inert>
+      <form id="settingsForm" class="settings-card">
+        <div class="settings-header">
+          <h2 id="settingsTitle">设置</h2>
+          <button id="closeSettingsButton" class="icon-button" type="button" title="关闭" aria-label="关闭设置">×</button>
+        </div>
+
+        <div class="access-selector" role="tablist" aria-label="模型访问方式">
+          <button id="apiAccessTab" type="button" role="tab" aria-selected="true" aria-controls="apiAccessFields">API 接入</button>
+          <button id="accountAccessTab" type="button" role="tab" aria-selected="false" aria-controls="accountAccessFields">订阅账号</button>
+        </div>
+
+        <section id="apiAccessFields" class="settings-group" role="tabpanel" aria-labelledby="apiAccessTab">
+          <p class="provider-help">使用兼容 OpenAI 接口的服务商或中转站提供的 Base URL、API Key 和模型名称。</p>
+          <label class="field">
+            <span>快速填写</span>
+            <select id="apiPresetInput">
+              <option value="custom">自定义 / 中转站 / 本地服务</option>
+              <option value="deepseek">DeepSeek API</option>
+              <option value="openai">OpenAI API</option>
+            </select>
+          </label>
+          <label class="field">
+            <span>API Key</span>
+            <input id="apiKeyInput" name="apiKey" type="password" autocomplete="off" placeholder="服务商提供的 API Key">
+          </label>
+
+          <label class="field">
+            <span>Base URL</span>
+            <input id="baseUrlInput" name="baseUrl" type="url" placeholder="例如 https://api.deepseek.com 或中转站的 /v1 地址">
+          </label>
+
+          <div class="api-model-row">
+            <label class="field">
+              <span>模型名称</span>
+              <input id="modelInput" name="model" type="text" list="apiModelList" placeholder="填写服务商实际支持的模型 ID">
+              <datalist id="apiModelList"></datalist>
+            </label>
+            <button id="refreshAPIModelsButton" class="secondary-button" type="button">获取模型</button>
+          </div>
+          <p class="provider-help">服务未提供模型列表时，可直接填写模型名称。</p>
+        </section>
+
+        <section id="accountAccessFields" class="settings-group" role="tabpanel" aria-labelledby="accountAccessTab" hidden>
+          <p class="provider-help">使用自己的账号授权登录，无需填写 API Key。首次使用需要安装 VideoLens Bridge，可用模型和额度以账号实际授权为准。</p>
+          <div class="account-providers" aria-label="账号授权状态">
+            <div class="account-provider-row" data-provider-row="gpt">
+              <div class="provider-identity">
+                <span class="provider-mark provider-mark-gpt">GPT</span>
+                <div>
+                  <strong>ChatGPT / Codex</strong>
+                  <span id="gptAccountStatus">未连接</span>
+                </div>
+              </div>
+              <button type="button" data-account-provider="gpt">授权</button>
+            </div>
+            <div class="account-provider-row" data-provider-row="claude">
+              <div class="provider-identity">
+                <span class="provider-mark provider-mark-claude">C</span>
+                <div>
+                  <strong>Claude / Claude Code</strong>
+                  <span id="claudeAccountStatus">未连接</span>
+                </div>
+              </div>
+              <button type="button" data-account-provider="claude">授权</button>
+            </div>
+            <div class="account-provider-row" data-provider-row="gemini">
+              <div class="provider-identity">
+                <span class="provider-mark provider-mark-gemini">G</span>
+                <div>
+                  <strong>Gemini / Gemini CLI</strong>
+                  <span id="geminiAccountStatus">未连接</span>
+                </div>
+              </div>
+              <button type="button" data-account-provider="gemini">授权</button>
+            </div>
+          </div>
+
+          <div class="account-model-row">
+            <label class="field">
+              <span>订阅账号可用模型</span>
+              <select id="accountModelInput" name="accountModel">
+                <option value="">授权账号后选择模型</option>
+              </select>
+            </label>
+            <button id="refreshAccountsButton" class="refresh-button" type="button">刷新状态</button>
+            <button id="logoutAccountButton" class="secondary-button" type="button" disabled>退出账号</button>
+          </div>
+          <p id="accountStatus" class="settings-status" role="status" aria-live="polite"></p>
+          <details id="accountCallbackPanel" class="account-callback" hidden>
+            <summary>授权后未自动完成？</summary>
+            <label class="field">
+              <span>粘贴授权结束后浏览器地址栏中的完整本机回调地址</span>
+              <input id="accountCallbackInput" type="url" autocomplete="off" placeholder="http://localhost:.../?code=...&state=...">
+            </label>
+            <button id="submitAccountCallbackButton" class="secondary-button" type="button">提交回调地址</button>
+          </details>
+        </section>
+
+        <label class="field">
+          <span>回答语言</span>
+          <select id="languageInput" name="language">
+            <option value="zh-CN">中文</option>
+            <option value="en-US">English</option>
+            <option value="auto">跟随问题</option>
+          </select>
+        </label>
+
+        <label class="field">
+          <span>当前位置之前的上下文窗口（秒）</span>
+          <input id="beforeInput" name="before" type="number" min="5" max="600" step="5">
+        </label>
+
+        <label class="field">
+          <span>截图质量</span>
+          <input id="qualityInput" name="quality" type="range" min="0.35" max="0.92" step="0.01">
+        </label>
+
+        <label class="check-field">
+          <input id="visionInput" name="supportsVision" type="checkbox">
+          <span>当前模型支持图像输入</span>
+        </label>
+
+        <label class="check-field">
+          <input id="frameInput" name="enableFrameInput" type="checkbox">
+          <span>提问时允许截取当前画面</span>
+        </label>
+
+        <label class="check-field">
+          <input id="historyInput" name="saveHistory" type="checkbox">
+          <span>保存当前视频问答历史</span>
+        </label>
+
+        <div class="settings-actions">
+          <button id="testProviderButton" type="button">测试所选模型</button>
+          <button class="primary-button" type="submit">保存设置</button>
+        </div>
+        <p id="settingsStatus" class="settings-status"></p>
+      </form>
+    </aside>
+
+    <script src="./sidepanel.js"></script>
+  </body>
+</html>
