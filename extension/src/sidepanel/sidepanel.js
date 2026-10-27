@@ -1,6 +1,7 @@
 const MESSAGE = {
   GET_BASIC_INFO: "VIDEO_LENS_GET_BASIC_INFO",
   GET_VIDEO_CONTEXT: "VIDEO_LENS_GET_VIDEO_CONTEXT",
+  CAPTURE_CONTEXT: "VIDEO_LENS_CAPTURE_CONTEXT",
   PREPARE_CONTEXT: "VIDEO_LENS_PREPARE_CONTEXT",
   RELEASE_CONTEXT: "VIDEO_LENS_RELEASE_CONTEXT",
   SEEK_TO: "VIDEO_LENS_SEEK_TO",
@@ -338,7 +339,7 @@ function prepareVideoContext() {
   sendRuntime({ type: MESSAGE.PREPARE_CONTEXT, tabId: state.targetTabId, settings: state.settings }).catch(() => {});
 }
 
-async function getCompleteVideoContext(question, requestSessionKey) {
+async function getQuestionVideoContext(question, requestSessionKey, snapshot) {
   state.waitingForVideoText = true;
   state.cancelContextRequest = false;
   renderModeState();
@@ -347,15 +348,19 @@ async function getCompleteVideoContext(question, requestSessionKey) {
       if (state.cancelContextRequest) throw new Error("已取消本次提问，视频内容会继续在后台准备。");
       assertActiveRequestSession(requestSessionKey);
       const context = await sendRuntime({
-        type: MESSAGE.GET_VIDEO_CONTEXT, tabId: state.targetTabId, question, settings: state.settings
+        type: MESSAGE.GET_VIDEO_CONTEXT, tabId: state.targetTabId, question, settings: state.settings,
+        snapshotInfo: snapshot.videoInfo
       });
       assertActiveRequestSession(requestSessionKey, context.videoInfo);
       if (state.cancelContextRequest) throw new Error("已取消本次提问，视频内容会继续在后台准备。");
-      if (!context.pending) return context;
-      const progress = context.duration > 0
-        ? `（${Math.min(99, Math.floor(context.processedUntil / context.duration * 100))}%）` : "";
+      if (!context.pending) return { ...context, videoInfo: snapshot.videoInfo,
+        frameSnapshot: snapshot.frameSnapshot || null,
+        warnings: [...new Set([...(snapshot.warnings || []), ...(context.warnings || [])])] };
+      const target = snapshot.videoInfo.currentTime;
+      const progress = target > 0
+        ? `（${Math.min(99, Math.floor(context.processedUntil / target * 100))}%）` : "";
       state.loadingText = context.preparation === "runtime"
-        ? "首次使用，正在自动准备视频处理环境..." : `正在准备完整视频内容${progress}...`;
+        ? "首次使用，正在自动准备视频处理环境..." : `正在准备 ${formatTimestamp(target)} 之前的内容${progress}...`;
       renderModeState();
       renderChat();
       await new Promise((resolve) => window.setTimeout(resolve, 2000));
@@ -542,15 +547,19 @@ async function sendQuestion(rawQuestion) {
   state.transientError = "";
   state.loadingText = "正在分析当前片段...";
   dom.questionInput.value = "";
-  render({ forceScrollToBottom: true });
-
   try {
     assertActiveRequestSession(requestSessionKey);
+    // Dispatch capture before rendering history, subtitle work or runtime polling.
+    const snapshotPromise = sendRuntime({ type: MESSAGE.CAPTURE_CONTEXT,
+      tabId: state.targetTabId, settings: state.settings });
+    render({ forceScrollToBottom: true });
+    const snapshot = await snapshotPromise;
+    assertActiveRequestSession(requestSessionKey, snapshot.videoInfo);
     state.loadingText = "正在理解当前视频片段...";
     renderModeState();
     renderChat();
 
-    const context = await getCompleteVideoContext(question, requestSessionKey);
+    const context = await getQuestionVideoContext(question, requestSessionKey, snapshot);
     assertActiveRequestSession(requestSessionKey, context.videoInfo);
     const cutoff = context.videoInfo.currentTime || 0;
     const videoMemory = await prepareVideoMemory(question, requestSessionKey, cutoff);
@@ -580,6 +589,7 @@ async function sendQuestion(rawQuestion) {
       platform: context.videoInfo.platform,
       timestamp: context.videoInfo.currentTime || 0,
       contextEnd: cutoff,
+      questionCapturedAt: snapshot.capturedAt || null,
       question,
       answer: response.answer,
       webSearch: response.webSearch || null,

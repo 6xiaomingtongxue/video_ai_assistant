@@ -15,6 +15,8 @@ import (
 func TestTextProbeRequiresIdentityAndCredential(t *testing.T) {
 	var validIdentity atomic.Bool
 	validIdentity.Store(true)
+	var progressive atomic.Bool
+	progressive.Store(true)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/health" || r.Header.Get("Authorization") != "Bearer text-only-key" {
 			w.WriteHeader(http.StatusUnauthorized)
@@ -24,7 +26,8 @@ func TestTextProbeRequiresIdentityAndCredential(t *testing.T) {
 		if !validIdentity.Load() {
 			service = "unrelated-local-server"
 		}
-		_ = json.NewEncoder(w).Encode(map[string]any{"service": service, "schema": 1, "wholeVideoText": true})
+		_ = json.NewEncoder(w).Encode(map[string]any{"service": service, "schema": 1, "wholeVideoText": true,
+			"progressiveText": progressive.Load()})
 	}))
 	defer server.Close()
 	if probeTextService(server.URL, "incorrect-key") {
@@ -33,6 +36,11 @@ func TestTextProbeRequiresIdentityAndCredential(t *testing.T) {
 	if !probeTextService(server.URL, "text-only-key") {
 		t.Fatal("expected a healthy managed service")
 	}
+	progressive.Store(false)
+	if probeTextService(server.URL, "text-only-key") {
+		t.Fatal("a legacy worker cannot be used for progressive text")
+	}
+	progressive.Store(true)
 	validIdentity.Store(false)
 	if probeTextService(server.URL, "text-only-key") {
 		t.Fatal("must not use an unrelated local server")

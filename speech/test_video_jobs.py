@@ -86,6 +86,51 @@ class WholeVideoTests(unittest.TestCase):
         finally:
             finish.set()
 
+    def test_http_exposes_processed_prefix_while_full_job_continues(self):
+        prefix_ready, finish = threading.Event(), threading.Event()
+
+        def incremental(*_):
+            def segments():
+                yield SimpleNamespace(start=0, end=5, text="Opening definition")
+                prefix_ready.set()  # The worker has consumed and published the first segment.
+                finish.wait(5)
+                yield SimpleNamespace(start=890, end=900, text="Closing summary")
+            return segments(), 900
+
+        store = self.store(transcriber=incremental)
+        handler = create_handler(store, "service-key")
+        authorization = "Bearer service-key"
+        _, job = self.request(handler, "POST", "/v1/video-transcriptions",
+                              {"url": "https://youtu.be/abcdefghijk", "model": "small"}, authorization)
+        try:
+            self.assertTrue(prefix_ready.wait(2))
+            path = "/v1/video-transcriptions/" + job["id"]
+            self.assertEqual(self.request(handler, "GET", path + "?partial=1")[0], 401)
+            _, partial = self.request(handler, "GET", path + "?partial=1", authorization=authorization)
+            self.assertEqual(partial["status"], "transcribing")
+            self.assertEqual(partial["recordingStart"], 0)
+            self.assertEqual(partial["processedUntil"], 5)
+            self.assertEqual([item["text"] for item in partial["segments"]], ["Opening definition"])
+            _, hidden = self.request(handler, "GET", path, authorization=authorization)
+            self.assertEqual(hidden["segments"], [], "legacy clients still see only complete transcripts")
+            _, duplicate = self.request(handler, "POST", "/v1/video-transcriptions",
+                                        {"url": "https://youtu.be/abcdefghijk?t=5", "model": "small"}, authorization)
+            self.assertEqual(duplicate["id"], job["id"])
+            self.assertEqual(len(duplicate["segments"]), 1)
+            self.assertEqual(len(self.downloads), 1)
+        finally:
+            finish.set()
+        store.close()
+        completed = store.get(job["id"])
+        self.assertEqual(completed["status"], "completed")
+        self.assertEqual(completed["processedUntil"], 900)
+        self.assertEqual(len(completed["segments"]), 2)
+        self.assertFalse(self.audio_paths[0].exists())
+        restarted = self.store()
+        cached = restarted.start("https://youtu.be/abcdefghijk", "small")
+        self.assertEqual(cached["segments"][-1]["text"], "Closing summary")
+        self.assertEqual(len(self.downloads), 1)
+
     def test_failed_jobs_can_be_retried_from_zero(self):
         attempts = []
 
@@ -217,6 +262,7 @@ class WholeVideoTests(unittest.TestCase):
         status, health = self.request(handler, "GET", "/health", authorization="Bearer service-key")
         self.assertEqual(status, 200)
         self.assertTrue(health["wholeVideoText"])
+        self.assertTrue(health["progressiveText"])
         self.assertEqual(health["service"], "videolens-video-text")
         self.assertEqual(health["schema"], 1)
         self.assertEqual(self.request(handler, "POST", "/v1/video-transcriptions", {})[0], 401)

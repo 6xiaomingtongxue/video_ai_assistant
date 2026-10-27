@@ -21,6 +21,8 @@ let serviceFailure = false;
 let runtimeReady = true;
 let nativeFailure = "";
 let jobErrorCode = "";
+let jobProgress = 30;
+let partialItems = [];
 const nativeRequests = [];
 const event = () => ({ addListener() {} });
 const background = vm.createContext({
@@ -32,8 +34,8 @@ const background = vm.createContext({
     return { ok: true, status: 200, json: async () => ({
       id: "a".repeat(64), status: jobStatus, recordingStart: jobStart,
       errorCode: jobErrorCode, error: "private-upstream-token",
-      processedUntil: jobStatus === "completed" ? 900 : 30, duration: 900,
-      segments: jobStatus === "completed" ? fullItems : []
+      processedUntil: jobStatus === "completed" ? 900 : jobProgress, duration: 900,
+      segments: jobStatus === "completed" ? fullItems : partialItems
     }) };
   },
   chrome: {
@@ -49,7 +51,7 @@ const background = vm.createContext({
             queueMicrotask(() => receive(nativeFailure
               ? { id: message.id, ok: false, error: nativeFailure }
               : { id: message.id, ok: true, data: runtimeReady
-                ? { status: "ready", baseUrl: "http://127.0.0.1:18318/v1", apiKey: "automatic-text-key", model: "Systran/faster-whisper-small" }
+                ? { status: "ready", baseUrl: "http://127.0.0.1:18318/v1", apiKey: "automatic-text-key", model: "Systran/faster-whisper-small", progressiveText: true }
                 : { status: "starting" } }));
           }
         };
@@ -63,9 +65,10 @@ const background = vm.createContext({
     tabs: { async sendMessage(tabId, message) {
       pageRequests.push(message);
       return { ok: true, data: {
+        snapshotOnly: message.payload?.snapshotOnly === true,
         videoInfo: { ...info }, transcriptContext: native ? [fullItems[1]] : [], relatedTranscriptContext: [],
         ...(native && message.payload?.includeFullText ? { fullTextTrack: { complete: true, items: fullItems } } : {}),
-        frameSnapshot: message.payload?.contextMode === "transcript-and-frame" ? { imageDataUrl: "data:image/jpeg;base64,test" } : null,
+        frameSnapshot: message.payload?.contextMode === "transcript-and-frame" ? { imageDataUrl: "data:image/jpeg;base64,test", timestamp: info.currentTime } : null,
         warnings: native ? [] : ["字幕获取失败"]
       } };
     } }
@@ -112,6 +115,23 @@ assert.equal(network[0].options.redirect, "error");
 context = await background.getVideoContext(7, "解释当前片段", settings);
 assert.equal(context.pending, true);
 assert.ok(!context.textContext, "partial text must not masquerade as a complete recording");
+jobStatus = "transcribing";
+jobProgress = 610;
+partialItems = fullItems;
+const frozenInfo = { ...info };
+info.currentTime = 850;
+context = await background.getVideoContext(7, "解释当前片段", settings, frozenInfo);
+assert.ok(!context.pending, "answer once the frozen question position is processed, before the full job completes");
+assert.equal(context.videoInfo.currentTime, 600);
+assert.equal(context.textContext.complete, false, "a ready prefix must not be labelled as a complete video cache");
+assert.equal(context.textContext.items.at(-1).end, 8, "crossing and future segments remain excluded");
+assert.ok(network.at(-1).url.endsWith("?partial=1"));
+const partialContext = context;
+await vm.runInContext("textArchiveWrite", background);
+assert.ok(!storage["videolens:textArchive"]["youtube:newvideo001"], "do not overwrite the full archive with a partial prefix");
+info.currentTime = 600;
+jobProgress = 30;
+partialItems = [];
 jobStatus = "completed";
 context = await background.getVideoContext(7, "解释开头的定义", settings);
 assert.equal(context.textContext.items[0].start, 0);
@@ -212,11 +232,15 @@ vm.runInContext(read("sidepanel/sidepanel.js"), sidepanel);
 assert.equal(sidepanel.mergeSettings({ contextAfterSeconds: 300 }).contextAfterSeconds, 0);
 const panelRequests = [];
 let pendingOnce = true;
+const frozenSnapshot = { videoInfo: { ...completedContext.videoInfo },
+  frameSnapshot: { imageDataUrl: "data:image/jpeg;base64,frozen600", timestamp: 600 }, warnings: [] };
 sidepanel.mockSend = async (request) => {
   panelRequests.push(request);
+  if (request.type === "VIDEO_LENS_CAPTURE_CONTEXT") return structuredClone(frozenSnapshot);
   if (request.type === "VIDEO_LENS_GET_VIDEO_CONTEXT") {
-    if (pendingOnce) { pendingOnce = false; return { pending: true, videoInfo: info, processedUntil: 300, duration: 900 }; }
-    return completedContext;
+    info.currentTime = 850;
+    if (pendingOnce) { pendingOnce = false; return { pending: true, videoInfo: frozenSnapshot.videoInfo, processedUntil: 300, duration: 900 }; }
+    return partialContext;
   }
   if (request.type === "VIDEO_LENS_ASK_AI") return { answer: "完整视频的回答" };
   throw new Error(`Unexpected request: ${request.type}`);
@@ -229,15 +253,24 @@ vm.runInContext(`
 `, sidepanel);
 await sidepanel.sendQuestion("解释视频开头");
 assert.equal(panelRequests.filter((request) => request.type === "VIDEO_LENS_GET_VIDEO_CONTEXT").length, 2);
+assert.equal(panelRequests[0].type, "VIDEO_LENS_CAPTURE_CONTEXT");
+assert.equal(panelRequests.filter((request) => request.type === "VIDEO_LENS_CAPTURE_CONTEXT").length, 1);
+assert.ok(panelRequests.filter((request) => request.type === "VIDEO_LENS_GET_VIDEO_CONTEXT").every((request) => request.snapshotInfo.currentTime === 600));
+assert.ok(!JSON.stringify(panelRequests.filter((request) => request.type === "VIDEO_LENS_GET_VIDEO_CONTEXT")).includes("frozen600"), "poll with metadata only, without copying the image on each poll");
 assert.equal(panelRequests.filter((request) => request.type === "VIDEO_LENS_ASK_AI").length, 1);
 assert.equal(vm.runInContext("state.records[0].textContext.items[0].start", sidepanel), 0);
 assert.equal(vm.runInContext("state.records[0].contextEnd", sidepanel), 600);
+assert.equal(vm.runInContext("state.records[0].timestamp", sidepanel), 600);
+assert.equal(vm.runInContext("state.records[0].frameSnapshot.imageDataUrl", sidepanel), frozenSnapshot.frameSnapshot.imageDataUrl);
+assert.equal(vm.runInContext("state.records[0].textContext.complete", sidepanel), false);
+const otherVideo = { ...frozenInfo, videoKey: "other-video" };
+await assert.rejects(background.getVideoContext(7, "解释", settings, otherVideo), /视频已切换/);
 sidepanel.mockCancel = async () => {
   vm.runInContext("state.cancelContextRequest = true", sidepanel);
   return { pending: true, videoInfo: info };
 };
 vm.runInContext("sendRuntime = mockCancel", sidepanel);
-await assert.rejects(sidepanel.getCompleteVideoContext("解释", "session"), /已取消/);
+await assert.rejects(sidepanel.getQuestionVideoContext("解释", "session", frozenSnapshot), /已取消/);
 assert.equal(vm.runInContext("state.waitingForVideoText", sidepanel), false);
 const html = read("sidepanel/index.html");
 assert.ok(!/audioCaptureButton|modeBadge|name="contextMode"/.test(html));

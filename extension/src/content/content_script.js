@@ -383,10 +383,36 @@
     };
   }
 
+  async function collectQuestionSnapshot(video, settings, requestedMode) {
+    const videoInfo = getVideoInfo(video);
+    const capturedAt = new Date().toISOString();
+    const started = Date.now();
+    const warnings = [];
+    let frameSnapshot = null;
+    if (requestedMode !== "transcript-only" && settings.enableFrameInput !== false) {
+      try {
+        frameSnapshot = await captureFrame(video, settings);
+        const tolerance = Math.max(1.5, (Date.now() - started) / 1000 * (video.playbackRate || 1) + 0.5);
+        if (video.seeking || Math.abs(video.currentTime - frameSnapshot.timestamp) > tolerance) {
+          frameSnapshot = null;
+          warnings.push("截取画面时播放位置发生变化，本次使用提问时刻的文字内容。");
+        } else {
+          videoInfo.currentTime = frameSnapshot.timestamp;
+        }
+      } catch {
+        warnings.push("提问时的画面暂时无法截取，将使用可获取的视频内容。");
+      }
+    }
+    if (getVideoKey() !== videoInfo.videoKey) throw new Error("视频已切换，请在当前视频重新提问。");
+    // The snapshot request must not await subtitle or model/runtime preparation.
+    return { snapshotOnly: true, videoInfo, frameSnapshot, warnings, capturedAt };
+  }
+
   async function collectContext(payload) {
     const settings = payload.settings || {};
     const requestedMode = payload.contextMode || "transcript-and-frame";
     const video = requireVideo();
+    if (payload.snapshotOnly) return collectQuestionSnapshot(video, settings, requestedMode);
     const warnings = [];
     const videoInfo = getVideoInfo(video);
     let contextMode = requestedMode;
@@ -1283,12 +1309,13 @@
       throw new Error("浏览器无法创建截图画布。");
     }
 
+    const timestamp = video.currentTime || 0;
     context.drawImage(video, 0, 0, width, height);
     const quality = clamp(Number(settings.frameImageQuality) || DEFAULT_CAPTURE.quality, 0.35, 0.92);
     const imageDataUrl = canvas.toDataURL(DEFAULT_CAPTURE.mimeType, quality);
 
     return {
-      timestamp: video.currentTime || 0,
+      timestamp,
       imageDataUrl,
       width,
       height,
@@ -1309,6 +1336,7 @@
     }
 
     const quality = clamp(Number(settings.frameImageQuality) || DEFAULT_CAPTURE.quality, 0.35, 0.92);
+    const timestamp = video.currentTime || 0;
     const screenshot = await sendRuntimeMessage({
       type: MESSAGE.CAPTURE_VISIBLE_TAB,
       options: { quality }
@@ -1337,7 +1365,7 @@
     context.drawImage(image, sourceX, sourceY, sourceWidth, sourceHeight, 0, 0, width, height);
 
     return {
-      timestamp: video.currentTime || 0,
+      timestamp,
       imageDataUrl: canvas.toDataURL(DEFAULT_CAPTURE.mimeType, quality),
       width,
       height,

@@ -144,13 +144,13 @@ class VideoJobs:
             "segments": list(job["segments"]) if include_partial or job["status"] == "completed" else [],
         }
 
-    def start(self, url, model, language=""):
+    def start(self, url, model, language="", *, include_partial=False):
         options = validate_options(url, model, language)
         job_id = hashlib.sha256(json.dumps(options, sort_keys=True).encode()).hexdigest()
         with self.lock:
             existing = self.jobs.get(job_id)
             if existing and existing["status"] != "failed":
-                return self._view(existing)
+                return self._view(existing, include_partial=include_partial)
             path = self._path(job_id)
             if path.is_file():
                 try:
@@ -174,7 +174,7 @@ class VideoJobs:
                 self.jobs.pop(job_id, None)
                 raise
             self.executor.submit(self._run, job_id)
-            return self._view(job)
+            return self._view(job, include_partial=include_partial)
 
     def get(self, job_id, *, include_partial=False):
         with self.lock:

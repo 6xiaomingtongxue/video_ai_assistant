@@ -4,6 +4,7 @@ const MESSAGE = {
   GET_TARGET_TAB: "VIDEO_LENS_GET_TARGET_TAB",
   PREPARE_CONTEXT: "VIDEO_LENS_PREPARE_CONTEXT",
   GET_VIDEO_CONTEXT: "VIDEO_LENS_GET_VIDEO_CONTEXT",
+  CAPTURE_CONTEXT: "VIDEO_LENS_CAPTURE_CONTEXT",
   RELEASE_CONTEXT: "VIDEO_LENS_RELEASE_CONTEXT",
   ASK_AI: "VIDEO_LENS_ASK_AI",
   SUMMARIZE_MEMORY: "VIDEO_LENS_SUMMARIZE_MEMORY",
@@ -97,7 +98,7 @@ chrome.commands.onCommand.addListener(async (command) => {
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (!message || typeof message.type !== "string") return false;
-  if ([MESSAGE.PREPARE_CONTEXT, MESSAGE.GET_VIDEO_CONTEXT, MESSAGE.RELEASE_CONTEXT].includes(message.type)) {
+  if ([MESSAGE.PREPARE_CONTEXT, MESSAGE.GET_VIDEO_CONTEXT, MESSAGE.CAPTURE_CONTEXT, MESSAGE.RELEASE_CONTEXT].includes(message.type)) {
     handleVideoContextMessage(message, sender)
       .then((data) => sendResponse({ ok: true, data }))
       .catch((error) => sendResponse({ ok: false, error: normalizeError(error) }));
@@ -229,7 +230,7 @@ function getContentContextSettings(settings) {
   };
 }
 
-async function collectVideoContext(tabId, question, settings, prepareOnly = false) {
+async function collectVideoContext(tabId, question, settings, prepareOnly = false, snapshotOnly = false) {
   const supportsVision = settings.authMode === "account"
     ? settings.accountProvider.supportsVision : settings.aiProvider.supportsVision;
   const response = await chrome.tabs.sendMessage(tabId, {
@@ -239,11 +240,28 @@ async function collectVideoContext(tabId, question, settings, prepareOnly = fals
       contextMode: prepareOnly || supportsVision === false || settings.enableFrameInput === false
         ? "transcript-only" : "transcript-and-frame",
       includeFullText: prepareOnly,
+      snapshotOnly,
       settings: getContentContextSettings(settings)
     }
   });
   if (!response?.ok || !response.data?.videoInfo) throw new Error("暂时无法获取视频内容，请刷新视频页面后重试。");
   return response.data;
+}
+
+function freezeQuestionInfo(info) {
+  if (!info || !Number.isFinite(info.currentTime) || info.currentTime < 0) {
+    throw new Error("未获取到有效的视频提问时间，请刷新视频页面后重试。");
+  }
+  getVideoTextKey(info);
+  return { ...info };
+}
+
+async function captureQuestionSnapshot(tabId, partialSettings) {
+  const settings = mergeSettings(partialSettings);
+  const context = await collectVideoContext(tabId, "", settings, false, true);
+  if (context.snapshotOnly !== true) throw new Error("请刷新视频页面，以启用提问时刻的画面和时间快照。");
+  return { videoInfo: freezeQuestionInfo(context.videoInfo), frameSnapshot: context.frameSnapshot || null,
+    capturedAt: context.capturedAt, warnings: context.warnings || [] };
 }
 
 function prepareVideoContext(tabId, partialSettings) {
@@ -305,6 +323,9 @@ async function getWholeVideoService() {
     throw error;
   }
   if (service.status === "starting") return null;
+  if (service.status === "ready" && service.progressiveText !== true) {
+    throw new Error("请更新 VideoLens Bridge，以支持边识别边回答。");
+  }
   if (service.status !== "ready" || service.baseUrl !== "http://127.0.0.1:18318/v1"
     || !service.apiKey || service.model !== "Systran/faster-whisper-small") {
     throw new Error("VideoLens Bridge 返回的视频处理配置无效，请更新 Bridge。");
@@ -378,7 +399,12 @@ async function ensureFullVideoText(context, settings) {
   }
   if (record?.complete) return record;
   const service = await getWholeVideoService();
-  if (!service) return { complete: false, preparation: "runtime", recordingStart: 0 };
+  if (!service) {
+    const preparing = { items: [], complete: false, source: "speech-to-text", preparation: "runtime",
+      recordingStart: 0, processedUntil: 0, duration: context.videoInfo.duration || 0 };
+    rememberVideoText(key, preparing);
+    return preparing;
+  }
   const configuration = JSON.stringify(["managed-local-v1", service.model, service.language]);
   const requestKey = `${key}:${configuration}`;
   if (pendingVideoTextRequests.has(requestKey)) return pendingVideoTextRequests.get(requestKey);
@@ -389,7 +415,7 @@ async function ensureFullVideoText(context, settings) {
     let job;
     try {
       job = record?.jobId && record.configuration === configuration
-        ? await requestWholeVideoService(service, `/${record.jobId}`) : await startJob();
+        ? await requestWholeVideoService(service, `/${record.jobId}?partial=1`) : await startJob();
     } catch (error) {
       if (error.jobMissing) job = await startJob();
       else {
@@ -398,7 +424,7 @@ async function ensureFullVideoText(context, settings) {
       }
     }
     const nextRecord = {
-      items: job.status === "completed" ? normalizeVideoText(job.segments) : [],
+      items: normalizeVideoText(job.segments),
       complete: job.status === "completed", source: "speech-to-text", recordingStart: 0,
       duration: Number(job.duration) || 0, processedUntil: Number(job.processedUntil) || 0,
       jobId: job.id, configuration, updatedAt: Date.now()
@@ -437,7 +463,7 @@ function isHistoryRecordAvailable(record, currentTime) {
 function getVideoTextContext(record, currentTime, question, settings) {
   const cutoff = getPlaybackCutoff(currentTime);
   const all = getPlayedVideoText(record.items, cutoff);
-  const metadata = { source: record.source, recordingStart: 0, complete: true,
+  const metadata = { source: record.source, recordingStart: 0, complete: record.complete === true,
     duration: record.duration, availableUntil: cutoff };
   if (all.reduce((total, item) => total + item.text.length, 0) <= 12000) {
     return { ...metadata, items: all, relatedItems: [] };
@@ -469,27 +495,43 @@ function getVideoTextContext(record, currentTime, question, settings) {
   return { ...metadata, items, relatedItems: relatedItems.sort((a, b) => a.start - b.start) };
 }
 
-async function getVideoContext(tabId, question, partialSettings) {
+function isQuestionTextReady(record, currentTime) {
+  return record.complete === true || (Boolean(record.jobId) && Number.isFinite(record.processedUntil)
+    && record.processedUntil >= getPlaybackCutoff(currentTime));
+}
+
+async function assertQuestionVideo(tabId, key) {
+  const live = await chrome.tabs.sendMessage(tabId, { type: "VIDEO_LENS_GET_BASIC_INFO" });
+  if (!live?.ok || !live.data?.videoInfo) throw new Error("暂时无法确认视频页面，请刷新后重试。");
+  if (getVideoTextKey(live.data.videoInfo) !== key) throw new Error("视频已切换，请在当前视频重新提问。");
+}
+
+async function getVideoContext(tabId, question, partialSettings, snapshotInfo = null) {
   const settings = mergeSettings(partialSettings);
+  const snapshot = snapshotInfo ? { videoInfo: freezeQuestionInfo(snapshotInfo) }
+    : await captureQuestionSnapshot(tabId, settings);
+  const info = snapshot.videoInfo;
+  const key = getVideoTextKey(info);
+  await assertQuestionVideo(tabId, key);
   if (pendingContextPreparations.has(tabId)) await pendingContextPreparations.get(tabId).catch(() => {});
-  const preparation = await collectVideoContext(tabId, question, settings, true);
+  const preparation = fullVideoText.has(key) ? { videoInfo: info }
+    : await collectVideoContext(tabId, question, settings, true);
+  if (getVideoTextKey(preparation.videoInfo) !== key) throw new Error("视频已切换，请在当前视频重新提问。");
   const record = await ensureFullVideoText(preparation, settings);
-  if (!record.complete) {
-    return { pending: true, videoInfo: preparation.videoInfo, preparation: record.preparation || "video", processedUntil: record.processedUntil || 0, duration: record.duration || 0 };
+  await assertQuestionVideo(tabId, key);
+  if (!isQuestionTextReady(record, info.currentTime)) {
+    return { pending: true, videoInfo: info, requiredUntil: info.currentTime,
+      preparation: record.preparation || "video", processedUntil: record.processedUntil || 0, duration: record.duration || 0 };
   }
-  const context = await collectVideoContext(tabId, question, settings);
-  if (getVideoTextKey(context.videoInfo) !== getVideoTextKey(preparation.videoInfo)) {
-    throw new Error("视频已切换，请在当前视频重新提问。");
-  }
-  const warnings = (context.warnings || []).flatMap((warning) => {
+  const warnings = (preparation.warnings || []).flatMap((warning) => {
     if (warning.startsWith("当前平台暂不支持画面输入")) return ["当前画面暂时不可用，将使用可获取的视频内容。"]; 
     return /字幕|语音|转写|转文字|音频/.test(warning) ? [] : [warning];
   });
-  const textContext = getVideoTextContext(record, context.videoInfo.currentTime, question, settings);
+  const textContext = getVideoTextContext(record, info.currentTime, question, settings);
   return {
-    videoInfo: context.videoInfo,
+    videoInfo: info,
     textContext,
-    frameSnapshot: context.frameSnapshot || null,
+    frameSnapshot: snapshot.frameSnapshot || null,
     warnings
   };
 }
@@ -504,9 +546,10 @@ async function handleVideoContextMessage(message, sender) {
     throw new Error("请在 VideoLens 侧栏中获取视频上下文。");
   }
   if (!Number.isInteger(message.tabId)) throw new Error("未找到当前视频标签页。");
+  if (message.type === MESSAGE.CAPTURE_CONTEXT) return captureQuestionSnapshot(message.tabId, message.settings);
   if (message.type === MESSAGE.RELEASE_CONTEXT) return releaseVideoContext(message.tabId);
   if (message.type === MESSAGE.PREPARE_CONTEXT) return prepareVideoContext(message.tabId, message.settings);
-  return getVideoContext(message.tabId, message.question, message.settings);
+  return getVideoContext(message.tabId, message.question, message.settings, message.snapshotInfo);
 }
 
 async function openSidePanelForTab(tabId) {

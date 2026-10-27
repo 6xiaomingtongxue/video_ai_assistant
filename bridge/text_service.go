@@ -33,19 +33,20 @@ func probeTextService(baseURL, key string) bool {
 	}
 	defer response.Body.Close()
 	var health struct {
-		Service        string `json:"service"`
-		WholeVideoText bool   `json:"wholeVideoText"`
-		Schema         int    `json:"schema"`
+		Service         string `json:"service"`
+		WholeVideoText  bool   `json:"wholeVideoText"`
+		ProgressiveText bool   `json:"progressiveText"`
+		Schema          int    `json:"schema"`
 	}
 	return response.StatusCode == http.StatusOK && json.NewDecoder(io.LimitReader(response.Body, 4096)).Decode(&health) == nil &&
-		health.Service == "videolens-video-text" && health.WholeVideoText && health.Schema == 1
+		health.Service == "videolens-video-text" && health.WholeVideoText && health.ProgressiveText && health.Schema == 1
 }
 
 // Polling never blocks Native Messaging while first-run dependencies download.
 func (b *bridgeRuntime) textConfig() (map[string]any, error) {
 	if probeTextService(textServiceURL, b.secrets.TextAPIKey) {
 		return map[string]any{"status": "ready", "baseUrl": textServiceURL + "/v1", "apiKey": b.secrets.TextAPIKey,
-			"model": "Systran/faster-whisper-small"}, nil
+			"model": "Systran/faster-whisper-small", "progressiveText": true}, nil
 	}
 	b.textMu.Lock()
 	defer b.textMu.Unlock()

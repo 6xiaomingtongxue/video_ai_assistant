@@ -5,6 +5,7 @@ import json
 import os
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from urllib.parse import parse_qs, urlsplit
 
 from video_jobs import VideoJobs
 
@@ -33,11 +34,14 @@ def create_handler(jobs, api_key=""):
             if not self.authorized():
                 return
             if self.path == "/health":
-                self.respond(200, {"status": "ok", "wholeVideoText": True, "service": "videolens-video-text", "schema": 1})
+                self.respond(200, {"status": "ok", "wholeVideoText": True, "progressiveText": True,
+                                   "service": "videolens-video-text", "schema": 1})
                 return
             if self.path.startswith("/v1/video-transcriptions/"):
                 try:
-                    self.respond(200, jobs.get(self.path.rsplit("/", 1)[-1]))
+                    parsed = urlsplit(self.path)
+                    partial = parse_qs(parsed.query).get("partial", [""])[0] == "1"
+                    self.respond(200, jobs.get(parsed.path.rsplit("/", 1)[-1], include_partial=partial))
                 except (KeyError, ValueError, OSError):
                     self.respond(404, {"error": "Video job not found"})
                 return
@@ -57,7 +61,7 @@ def create_handler(jobs, api_key=""):
                 if not 0 < size <= 16384:
                     raise ValueError("Invalid request size")
                 data = json.loads(self.rfile.read(size))
-                result = jobs.start(data["url"], data["model"], data.get("language", ""))
+                result = jobs.start(data["url"], data["model"], data.get("language", ""), include_partial=True)
                 self.respond(200 if result["status"] == "completed" else 202, result)
             except (ValueError, KeyError, TypeError):
                 self.respond(400, {"error": "Invalid video URL, model or language"})

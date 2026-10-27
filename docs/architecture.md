@@ -34,11 +34,11 @@ YouTube page
 
 较早问答每累计 3 轮触发一次滚动摘要，单次最多整理 8 轮。摘要失败时不会阻断当前提问，系统会继续使用相关旧问答和最近对话。
 
-文本获取由 `ensureFullVideoText` 负责：完整字幕轨道 → 完整源音频转写任务。缓存保留全片，`getVideoTextContext` 先排除 `end > currentTime` 的文本，再按长度选取已播放范围的全文或窗口与相关片段，概览检索也受此限制。结果为 `textContext: { items, relatedItems, source, recordingStart: 0, complete: true, availableUntil }`；`complete` 表示整段记录已就绪，`availableUntil` 表示本次回答的文本截止时间。模型请求构建时再次检查普通与相关文本。source 只用于内部可靠性提示，不在聊天或导出笔记中展示。
+文本获取由 `ensureFullVideoText` 负责：完整字幕轨道 → 完整源音频转写任务。缓存保留全片，转写中通过 `?partial=1` 获取已处理部分；当 `processedUntil` 覆盖提问快照时间即可回答。`getVideoTextContext` 先排除 `end > snapshotTime` 的文本，再按长度选取该范围的全文或窗口与相关片段，概览检索也受此限制。结果为 `textContext: { items, relatedItems, source, recordingStart: 0, complete, availableUntil }`；`complete` 仅表示整段记录是否就绪，未完成部分不会写入浏览器完整文本存档，`availableUntil` 表示本次回答的文本截止时间。模型请求构建时再次检查普通与相关文本。source 只用于内部可靠性提示，不在聊天或导出笔记中展示。
 
 问答的 `contextEnd` 和摘要的 `summaryThrough` 记录其可接触内容的截止时间；只有时间范围不超过当前播放位置的问答和摘要才能注入模型。缺少这些范围字段的旧记录继续显示，但不参与模型历史上下文。摘要遇到回退时，从符合范围的问答重建；不会删除原始问答。
 
-`VIDEO_LENS_PREPARE_CONTEXT` 在助手打开时发起完整文本准备；`VIDEO_LENS_GET_VIDEO_CONTEXT` 在后台任务未完成时返回 pending，聊天侧等待完整记录就绪后才调用模型。取消本次等待或关闭侧栏不会取消后台任务。当前播放时间决定本次回答可用文本的截止位置和检索窗口，绝不作为音频起点发送给文本服务。详情见 [完整视频文本](video-text.md)。
+`VIDEO_LENS_PREPARE_CONTEXT` 在助手打开时发起完整文本准备。提问先调用 `VIDEO_LENS_CAPTURE_CONTEXT`，页面走 `snapshotOnly` 快速路径，在任何字幕等待前固定时间和画面；图片只保留在侧栏这次请求中。之后 `VIDEO_LENS_GET_VIDEO_CONTEXT` 轮询仅携带快照元信息，后台核对视频身份，并在识别进度不足时返回 pending；进度覆盖快照位置即可调用模型，不等待全片完成，也不重新截取后来画面。取消等待或关闭侧栏不会取消后台任务。提问快照时间决定本次回答可用文本的截止位置和检索窗口，绝不作为音频起点发送给文本服务。详情见 [完整视频文本](video-text.md)。
 
 没有完整字幕或文本缓存时，后台通过 Native Messaging 的 `text.config` 请求自动发现服务。Bridge 在环境准备期间立即返回 starting，不阻塞授权等消息；准备完成后返回固定本机端点 `127.0.0.1:18318/v1` 和独立凭证。扩展忽略旧版手动文本服务设置，凭证只在后台内存中使用，不进入视频页面或设置存储。
 
