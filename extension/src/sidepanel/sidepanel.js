@@ -6,6 +6,7 @@ const MESSAGE = {
   RELEASE_CONTEXT: "VIDEO_LENS_RELEASE_CONTEXT",
   SEEK_TO: "VIDEO_LENS_SEEK_TO",
   ASK_AI: "VIDEO_LENS_ASK_AI",
+  CANCEL_ANSWER: "VIDEO_LENS_CANCEL_ANSWER",
   SUMMARIZE_MEMORY: "VIDEO_LENS_SUMMARIZE_MEMORY",
   TEST_PROVIDER: "VIDEO_LENS_TEST_PROVIDER",
   LIST_API_MODELS: "VIDEO_LENS_LIST_API_MODELS",
@@ -84,7 +85,10 @@ const state = {
   accountResumeRequest: null,
   accountOverviewRequestId: 0,
   waitingForVideoText: false,
-  cancelContextRequest: false
+  cancelContextRequest: false,
+  answerRequestId: null,
+  stoppingAnswer: false,
+  lastRunTrace: null
 };
 
 const dom = {};
@@ -162,7 +166,8 @@ function bindEvents() {
     catch { showToast("联网搜索设置未保存，请重试"); }
   });
   dom.sendButton.addEventListener("click", () => {
-    if (state.waitingForVideoText) state.cancelContextRequest = true;
+    if (state.answerRequestId) stopAnswer().catch(() => {});
+    else if (state.waitingForVideoText) state.cancelContextRequest = true;
     else sendQuestion(dom.questionInput.value);
   });
   dom.questionInput.addEventListener("keydown", (event) => {
@@ -272,6 +277,7 @@ async function refreshVideoInfo() {
     const nextKey = buildSessionKey(nextInfo);
     const sessionChanged = nextKey !== state.sessionKey;
     if (sessionChanged) {
+      if (state.answerRequestId) stopAnswer().catch(() => {});
       state.sessionKey = nextKey;
       const session = getCurrentSession();
       state.records = session.records || [];
@@ -327,8 +333,9 @@ function renderModeState() {
     dom.webSearchInput.checked = state.settings.enableWebSearch !== false;
     dom.webSearchInput.disabled = state.sending;
   }
-  dom.sendButton.disabled = (state.sending && !state.waitingForVideoText) || !state.videoInfo;
-  dom.sendButton.textContent = state.waitingForVideoText ? "取消" : "发送";
+  const canStop = Boolean(state.answerRequestId);
+  dom.sendButton.disabled = state.stoppingAnswer || (state.sending && !state.waitingForVideoText && !canStop) || (!state.videoInfo && !canStop);
+  dom.sendButton.textContent = state.stoppingAnswer ? "正在停止" : canStop ? "停止回答" : state.waitingForVideoText ? "取消" : "发送";
   dom.clearButton.disabled = state.sending || !state.records.length;
   dom.exportButton.disabled = !state.records.length;
   dom.statusLine.textContent = state.loadingText || getContextStatusText();
@@ -538,10 +545,27 @@ function createFramePreview(frame) {
   return preview;
 }
 
+async function stopAnswer() {
+  const requestId = state.answerRequestId;
+  if (!requestId || state.stoppingAnswer) return;
+  state.stoppingAnswer = true;
+  state.loadingText = "正在停止本次回答...";
+  renderModeState();
+  try { await sendRuntime({ type: MESSAGE.CANCEL_ANSWER, requestId }); }
+  catch (error) {
+    if (state.answerRequestId === requestId) {
+      state.stoppingAnswer = false;
+      renderModeState();
+      showToast("暂时无法停止回答，请重试。");
+    }
+  }
+}
+
 async function sendQuestion(rawQuestion) {
   const question = String(rawQuestion || "").trim();
   if (!question || state.sending) return;
   const requestSessionKey = state.sessionKey;
+  let answerRequestId = null;
 
   state.sending = true;
   state.transientError = "";
@@ -566,12 +590,16 @@ async function sendQuestion(rawQuestion) {
     assertActiveRequestSession(requestSessionKey, context.videoInfo);
 
     state.loadingText = state.settings.enableWebSearch !== false ? "正在分析问题，按需联网检索..." : "正在生成回答...";
+    answerRequestId = createId();
+    state.answerRequestId = answerRequestId;
+    state.stoppingAnswer = false;
     renderModeState();
     renderChat();
 
     const response = await sendRuntime({
       type: MESSAGE.ASK_AI,
       payload: {
+        requestId: answerRequestId,
         question,
         context,
         conversation: state.records.filter((record) => isHistoryRecordAvailable(record, cutoff))
@@ -580,8 +608,18 @@ async function sendQuestion(rawQuestion) {
       },
       settings: state.settings
     });
+    state.lastRunTrace = response.trace || null;
+    if (state.stoppingAnswer) {
+      const error = new Error("已停止本次回答。");
+      error.code = "cancelled";
+      throw error;
+    }
     assertActiveRequestSession(requestSessionKey, context.videoInfo);
 
+    // The course index can be reconstructed from the transcript cache; avoid
+    // duplicating the same whole-course outline in every question's history.
+    const storedTextContext = { ...(context.textContext || { items: [], relatedItems: [] }) };
+    delete storedTextContext.courseMemory;
     const record = {
       id: createId(),
       videoTitle: context.videoInfo.title,
@@ -593,7 +631,8 @@ async function sendQuestion(rawQuestion) {
       question,
       answer: response.answer,
       webSearch: response.webSearch || null,
-      textContext: context.textContext || { items: [], relatedItems: [] },
+      runTrace: response.trace || null,
+      textContext: storedTextContext,
       frameSnapshot: context.frameSnapshot || null,
       warnings: [
         ...(context.warnings || []),
@@ -607,11 +646,21 @@ async function sendQuestion(rawQuestion) {
     await persistCurrentSession();
     showToast(state.settings.saveHistory ? "已保存回答" : "已生成回答");
   } catch (error) {
-    state.transientError = error.message || String(error);
+    if (error.runTrace) state.lastRunTrace = error.runTrace;
+    if (error.code === "cancelled") {
+      if (state.sessionKey === requestSessionKey) {
+        if (!dom.questionInput.value.trim()) dom.questionInput.value = question;
+        showToast("已停止本次回答。");
+      }
+    } else if (state.sessionKey === requestSessionKey) state.transientError = error.message || String(error);
   } finally {
-    state.sending = false;
-    state.loadingText = "";
-    render();
+    if (!answerRequestId || state.answerRequestId === answerRequestId) {
+      state.answerRequestId = null;
+      state.stoppingAnswer = false;
+      state.sending = false;
+      state.loadingText = "";
+      render();
+    }
   }
 }
 
@@ -1702,7 +1751,10 @@ function sendRuntime(message) {
         return;
       }
       if (!response?.ok) {
-        reject(new Error(response?.error?.message || "扩展后台请求失败。"));
+        const error = new Error(response?.error?.message || "扩展后台请求失败。");
+        error.code = response?.error?.code;
+        error.runTrace = response?.error?.trace;
+        reject(error);
         return;
       }
       resolve(response.data);

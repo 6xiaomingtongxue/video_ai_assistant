@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import vm from "node:vm";
+import { spawnSync } from "node:child_process";
 
 const root = process.cwd();
 const extensionDir = path.join(root, "extension");
@@ -17,11 +18,14 @@ function exists(relativePath) {
   return fs.existsSync(path.join(extensionDir, relativePath));
 }
 
-function checkScript(relativePath) {
+function checkScript(relativePath, module = false) {
   const fullPath = path.join(extensionDir, relativePath);
   const code = fs.readFileSync(fullPath, "utf8");
   try {
-    new vm.Script(code, { filename: relativePath });
+    if (module || relativePath.endsWith(".mjs")) {
+      const result = spawnSync(process.execPath, ["--input-type=module", "--check"], { input: code, encoding: "utf8", windowsHide: true });
+      if (result.status !== 0) throw new Error(result.stderr || "Module syntax check failed");
+    } else new vm.Script(code, { filename: relativePath });
   } catch (error) {
     failures.push(`${relativePath}: ${error.message}`);
   }
@@ -74,7 +78,11 @@ assert(
   "local_settings must not be web accessible"
 );
 
-checkScript(manifest.background.service_worker);
+checkScript(manifest.background.service_worker, manifest.background.type === "module");
+assert(exists("src/background/question_harness.mjs"), "question harness module is required");
+checkScript("src/background/question_harness.mjs");
+assert(exists("src/background/course_memory.mjs"), "course memory module is required");
+checkScript("src/background/course_memory.mjs");
 for (const entry of manifest.content_scripts || []) {
   for (const script of entry.js || []) checkScript(script);
 }

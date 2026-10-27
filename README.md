@@ -64,7 +64,13 @@ npm run bridge:install
 
 点击发送时先锁定视频时间和画面，等待期间继续播放或拖动进度不会改变本次问题的上下文。没有完整字幕时，只需识别进度覆盖该提问时间点，就能先回答；后台仍从 00:00 继续完成整段转写和完整缓存。首次使用仍需准备环境、下载识别模型和源音频。
 
+长课程会在已播放文本上建立分块索引，组合当前讲解、相关早期原文与全局线索，而不必每次发送一两小时全文。支持按课程术语、`10:00`、`第10分钟` 或 `10分钟前` 找回内容；此前没有问过的知识点也能检索。索引在本地从缓存构建，不增加模型调用，原有聊天摘要继续保留。详见 [长课程记忆](docs/course-memory.md)。
+
 输入框下方可开关“联网搜索”。默认按需检索外部知识，回答附可点击来源，来源随历史保存并可导出；无需另配搜索密钥，视频防剧透范围继续生效。搜索使用结果摘要，服务不可用时会明确提示。详见 [联网搜索说明](docs/web-search.md)。
+
+回答由统一运行框架管理：常见片段解释跳过搜索规划，只调用一次模型；需要搜索时最多一次规划、两个查询、一次回答。回答阶段设有总时限，生成期间可点击“停止回答”。脱敏轨迹和离线回放评测用于检查调用预算、取消与防剧透，详见 [Harness 说明](docs/question-harness.md)。
+
+调用预算按每次提问重新计算，不限制同一视频的提问次数，长课程也按相同的单次预算处理。长期对话摘要的额外模型调用单独计算，课程原文索引不调用模型。
 
 无论视频播放到哪里才打开助手，后台都从 00:00 获取整段视频文本。有完整字幕时直接缓存全文；没有完整字幕时，VideoLens Bridge 自动准备运行环境并启动本机处理，用 yt-dlp 获取完整音频，再用 faster-whisper 从头转写。无需填写服务地址、密钥、识别模型或安装 Docker，API 和订阅账号两种模式均可使用。首次使用会下载运行环境和识别模型，后续复用本地缓存。处理不改变视频播放位置，关闭助手后任务和完整记录仍保留。使用方法见 [`docs/video-text.md`](docs/video-text.md)。
 
@@ -77,9 +83,11 @@ npm run bridge:install
 ```bash
 npm run validate
 npm test
+npm run test:course-memory
+npm run eval:harness
 ```
 
-`validate` 会检查 Manifest、扩展文件和主要 JavaScript 语法；`test` 会验证长期记忆、旧问答检索、字幕检索、账号授权和语音转文字回退逻辑。
+`validate` 会检查 Manifest、扩展文件和主要 JavaScript 语法；`test` 会验证长期记忆、长课程检索、旧问答检索、字幕检索、账号授权、语音转文字回退、回答预算、停止回答与离线场景回放。`test:course-memory` 可单独检查 1/2/12 小时模拟课程文本，`eval:harness` 可单独运行 15 个固定场景；它们不调用真实模型或网络，也不代表回答质量评分。
 
 ## Windows 发布
 
@@ -98,6 +106,9 @@ extension/
   manifest.json
   src/
     background/
+      service_worker.js
+      question_harness.mjs
+      course_memory.mjs
     content/
     sidepanel/
 bridge/
@@ -108,7 +119,16 @@ scripts/
   uninstall-bridge.ps1
   test-account-auth.mjs
   test-memory.mjs
+  test-course-memory.mjs
+  test-question-harness.mjs
+  test-answer-cancellation.mjs
+  eval-question-harness.mjs
+  evals/
+  helpers/
   validate-extension.mjs
+docs/
+  question-harness.md
+  course-memory.md
 video_ai_assistant_requirements.md
 ```
 

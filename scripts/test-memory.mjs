@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import vm from "node:vm";
+import { evaluateBackground } from "./helpers/background-vm.mjs";
 
 const root = process.cwd();
 const extensionDir = path.join(root, "extension");
@@ -32,7 +33,7 @@ function loadBackgroundScript() {
     }
   });
   const source = fs.readFileSync(path.join(extensionDir, "src/background/service_worker.js"), "utf8");
-  new vm.Script(source, { filename: "service_worker.js" }).runInContext(context);
+  evaluateBackground(context, source);
   return context;
 }
 

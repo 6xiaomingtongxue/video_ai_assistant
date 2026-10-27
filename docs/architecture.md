@@ -6,7 +6,7 @@ VideoLens AI 的 MVP 采用 Chrome MV3 插件结构，不需要前端构建工�
 
 - Content Script：注入 YouTube / B 站页面，显示 `Ask AI` 按钮，获取视频信息、当前字幕上下文、相关字幕时间块和当前帧截图，并执行时间戳跳转。
 - Side Panel：提供聊天 UI、快捷提问、设置、本地历史、视频级分层记忆和 Markdown 导出。通过统一接口获取视频上下文，不参与字幕与语音来源选择。
-- Background Service Worker：打开侧边栏，通过统一视频文本接口处理字幕优先与语音回退，组合上下文与视频记忆，调用 OpenAI-compatible 模型服务，按批次生成滚动记忆摘要，并通过 Native Messaging 管理 VideoLens Bridge。
+- Background Service Worker：打开侧边栏，通过统一视频文本接口处理字幕优先与语音回退，组合上下文与视频记忆，调用 OpenAI-compatible 模型服务，按批次生成滚动记忆摘要，并通过 Native Messaging 管理 VideoLens Bridge。`question_harness.mjs` 管理回答预算、超时、取消与轨迹；`course_memory.mjs` 构建长课程索引并检索已播放的原文。
 - VideoLens Bridge：扩展按需启动的本地宿主，内嵌授权、令牌刷新、协议翻译和模型路由能力；首次需要转写时自动准备独立运行环境并启动本机视频处理。
 - Storage：使用 `chrome.storage.local` 保存设置、按视频隔离的问答记录、长期摘要和摘要覆盖记录 ID。厂商令牌不进入扩展存储。
 - Video Text Service：字幕不能提供完整文本时，使用 yt-dlp 获取完整源音频，再用 faster-whisper 从 00:00 转写。任务及完整文本在本地服务中缓存，与当前播放位置及侧栏生命周期独立。扩展不再使用 tabCapture 或 Offscreen Audio。
@@ -25,16 +25,19 @@ YouTube page
   -> configured AI provider
 ```
 
-提问时，侧边栏先整理当前视频记忆，再调用 Background 的 `VIDEO_LENS_GET_VIDEO_CONTEXT` 收集当前视频上下文，最后把以下内容交给模型：
+提问时，侧边栏先锁定视频时间与画面，通过 `VIDEO_LENS_GET_VIDEO_CONTEXT` 等待文本覆盖该时间点，再整理该范围内的对话记忆，最后把以下内容交给模型：
 
 1. 当前视频长期摘要。
 2. 从较早问答中检索到的相关记录。
 3. 最近 6 轮原始问答。
 4. 当前时间点字幕、相关字幕片段和可选当前帧。
+5. 长课程已播放部分的分块原文索引。
 
 较早问答每累计 3 轮触发一次滚动摘要，单次最多整理 8 轮。摘要失败时不会阻断当前提问，系统会继续使用相关旧问答和最近对话。
 
 文本获取由 `ensureFullVideoText` 负责：完整字幕轨道 → 完整源音频转写任务。缓存保留全片，转写中通过 `?partial=1` 获取已处理部分；当 `processedUntil` 覆盖提问快照时间即可回答。`getVideoTextContext` 先排除 `end > snapshotTime` 的文本，再按长度选取该范围的全文或窗口与相关片段，概览检索也受此限制。结果为 `textContext: { items, relatedItems, source, recordingStart: 0, complete, availableUntil }`；`complete` 仅表示整段记录是否就绪，未完成部分不会写入浏览器完整文本存档，`availableUntil` 表示本次回答的文本截止时间。模型请求构建时再次检查普通与相关文本。source 只用于内部可靠性提示，不在聊天或导出笔记中展示。
+
+已播放文本超过 12000 字符时，`course_memory.mjs` 用当前窗口、相关原文与课程分块索引替代单纯抽样。分块约五分钟，超过三小时后扩大块大小以控制在 36 块以内；索引只保存带原始时间戳的节选，不能当作完整章节摘要。检索支持术语及绝对/相对时间引用，且不依赖历史提问。结果附加 `textContext.courseMemory`，最终模型边界再次校验其范围。索引从已有原文缓存本地重建，不增加模型调用，也不重复保存到每条问答中。详见 [长课程记忆](course-memory.md)。
 
 问答的 `contextEnd` 和摘要的 `summaryThrough` 记录其可接触内容的截止时间；只有时间范围不超过当前播放位置的问答和摘要才能注入模型。缺少这些范围字段的旧记录继续显示，但不参与模型历史上下文。摘要遇到回退时，从符合范围的问答重建；不会删除原始问答。
 

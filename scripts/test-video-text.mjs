@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import vm from "node:vm";
+import { evaluateBackground } from "./helpers/background-vm.mjs";
 
 const read = (name) => fs.readFileSync(path.join(process.cwd(), "extension/src", name), "utf8");
 const info = { url: "https://www.youtube.com/watch?v=abcdefghijk&t=600", videoKey: "abcdefghijk", platform: "youtube", currentTime: 600, duration: 900 };
@@ -74,7 +75,7 @@ const background = vm.createContext({
     } }
   }
 });
-vm.runInContext(read("background/service_worker.js"), background);
+evaluateBackground(background, read("background/service_worker.js"));
 const panel = { url: "chrome-extension://test/src/sidepanel/index.html?embedded=1" };
 const settings = { speechToText: { baseUrl: "https://old-manual-service.example/v1", apiKey: "text-service-key" }, aiProvider: { apiKey: "chat-secret" } };
 

@@ -5,7 +5,10 @@
   "description": "Chrome MV3 prototype for a video learning AI assistant.",
   "scripts": {
     "validate": "node scripts/validate-extension.mjs",
-    "test": "node scripts/test-memory.mjs && node scripts/test-account-auth.mjs && node scripts/test-account-panel.mjs && node scripts/test-speech.mjs && node scripts/test-question-snapshot.mjs && node scripts/test-web-search.mjs",
+    "test": "node scripts/test-memory.mjs && npm run test:course-memory && node scripts/test-account-auth.mjs && node scripts/test-account-panel.mjs && node scripts/test-speech.mjs && node scripts/test-question-snapshot.mjs && node scripts/test-web-search.mjs && npm run test:harness && npm run eval:harness",
+    "test:course-memory": "node scripts/test-course-memory.mjs",
+    "test:harness": "node scripts/test-question-harness.mjs && node scripts/test-answer-cancellation.mjs",
+    "eval:harness": "node scripts/eval-question-harness.mjs",
     "bridge:build": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-bridge.ps1",
     "bridge:install": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/install-bridge.ps1",
     "bridge:uninstall": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/uninstall-bridge.ps1",

@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import vm from "node:vm";
+import { evaluateBackground } from "./helpers/background-vm.mjs";
 
 const bing = `<ol><li class="b_algo"><h2><a href="https://docs.example.com/gradient">Gradient descent documentation</a></h2>
 <p>Gradient descent uses a learning rate. &amp; Symbols are preserved.</p></li></ol>`;
@@ -35,7 +36,7 @@ function loadBackground(options = {}) {
     chrome: { runtime: { getURL: value => `chrome-extension://test/${value}`, onInstalled: event(), onMessage: event() },
       action: { onClicked: event() }, commands: { onCommand: event() } }
   });
-  vm.runInContext(fs.readFileSync("extension/src/background/service_worker.js", "utf8"), background);
+  evaluateBackground(background);
   if (options.account) {
     background.testResolvedSettings = { authMode: "account", enableWebSearch: true, language: "zh-CN",
       aiProvider: { accessMode: "account", apiKey: "private-account-key", baseUrl: "http://127.0.0.1:18317/v1", model: "test-model" } };
@@ -77,7 +78,7 @@ for (const account of [false, true]) {
 }
 {
   const { ask, modelRequests, network } = loadBackground({ plan: '{"search":false,"queries":[]}' });
-  assert.equal((await ask()).webSearch.status, "not-needed");
+  assert.equal((await ask({}, "梯度下降有什么背景知识？")).webSearch.status, "not-needed");
   assert.equal(modelRequests.length, 2);
   assert.equal(network.length, 0);
 }

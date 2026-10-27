@@ -3,6 +3,7 @@ import { webcrypto } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import vm from "node:vm";
+import { evaluateBackground } from "./helpers/background-vm.mjs";
 
 const root = process.cwd();
 const source = fs.readFileSync(
@@ -118,7 +119,7 @@ function createContext(fetchMock, options = {}) {
       }
     }
   });
-  new vm.Script(source, { filename: "service_worker.js" }).runInContext(context);
+  evaluateBackground(context, source);
   return { context, openedTabs, nativeRequests, nativePorts, storage };
 }
 

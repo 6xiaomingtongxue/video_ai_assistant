@@ -1,0 +1,17 @@
+[
+  { "id": "local-explanation", "question": "请解释当前视频片段", "searchStatus": "not-needed", "models": 1, "tools": 0 },
+  { "id": "search-disabled", "question": "联网查找 gradient descent", "enabled": false, "searchStatus": "disabled", "models": 1, "tools": 0 },
+  { "id": "explicit-search", "question": "联网查找 gradient descent 官方文档", "searchStatus": "completed", "models": 2, "tools": 1 },
+  { "id": "latest-overrides-local-fast-path", "question": "解释当前视频片段并核实最新资料", "searchStatus": "completed", "models": 2, "tools": 1 },
+  { "id": "automatic-search-declined", "question": "梯度下降有什么背景知识？", "plan": "{\"search\":false,\"queries\":[]}", "searchStatus": "not-needed", "models": 2, "tools": 0 },
+  { "id": "explicit-search-declined", "question": "联网查找 gradient descent", "plan": "{\"search\":false,\"queries\":[]}", "searchStatus": "failed", "models": 2, "tools": 0 },
+  { "id": "malformed-plan-falls-back", "question": "联网查找 gradient descent", "plan": "not JSON PRIVATE_UPSTREAM_ERROR", "searchStatus": "failed", "models": 2, "tools": 0 },
+  { "id": "search-outage-falls-back", "question": "联网查找 gradient descent", "searchFail": true, "searchStatus": "failed", "models": 2, "tools": 1 },
+  { "id": "queries-bounded-at-two", "question": "联网查找 gradient descent", "plan": "{\"search\":true,\"queries\":[\"gradient descent\",\"gradient learning rate\",\"gradient optimizer\"]}", "searchStatus": "completed", "models": 2, "tools": 2 },
+  { "id": "unsafe-query-rejected", "question": "联网查找 gradient descent", "plan": "{\"search\":true,\"queries\":[\"https://private.example.com\",\"sk-private\"]}", "searchStatus": "failed", "models": 2, "tools": 0 },
+  { "id": "spoiler-search-blocked", "question": "联网找视频接下来会发生什么和结局", "searchStatus": "not-needed", "models": 1, "tools": 0 },
+  { "id": "untrusted-source-is-data", "question": "联网查找 gradient descent", "maliciousSource": true, "searchStatus": "completed", "models": 2, "tools": 1 },
+  { "id": "rate-limit-no-retry", "question": "请解释当前视频片段", "answerStatus": 429, "searchStatus": "not-needed", "models": 1, "tools": 0, "error": true },
+  { "id": "snapshot-survives-caller-mutation", "question": "联网查找 gradient descent", "mutate": true, "searchStatus": "completed", "models": 2, "tools": 1 },
+  { "id": "future-frame-is-dropped", "question": "请解释当前视频片段", "futureFrame": true, "searchStatus": "not-needed", "models": 1, "tools": 0 }
+]
